@@ -1,0 +1,13 @@
+{
+  "name": "htpi-tenant-service",
+  "version": "1.0.0",
+  "description": "HTPI Tenant Management Service",
+  "main": "app.py",
+  "scripts": {
+    "start": "python app.py",
+    "dev": "python app.py"
+  },
+  "keywords": ["htpi", "tenant", "multi-tenant", "microservice"],
+  "author": "HTPI",
+  "license": "ISC"
+}
