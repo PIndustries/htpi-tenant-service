@@ -4,7 +4,7 @@ import os
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import nats
 from nats.aio.client import Client as NATS
 from dotenv import load_dotenv
@@ -95,6 +95,9 @@ class TenantService:
             await self.nc.subscribe("htpi.tenant.get", cb=self.handle_get_tenant)
             await self.nc.subscribe("htpi.tenant.list.for.user", cb=self.handle_list_user_tenants)
             await self.nc.subscribe("htpi.tenant.verify.access", cb=self.handle_verify_access)
+            
+            # Subscribe to health check requests
+            await self.nc.subscribe("htpi.health.htpi.tenant.service", cb=self.handle_health_check)
             
             logger.info("Tenant service subscriptions established")
         except Exception as e:
@@ -287,8 +290,44 @@ class TenantService:
                 'error': str(e)
             }).encode())
     
+    async def handle_health_check(self, msg):
+        """Handle health check requests"""
+        try:
+            data = json.loads(msg.data.decode())
+            request_id = data.get('requestId')
+            client_id = data.get('clientId')
+            
+            # Calculate uptime
+            uptime = datetime.utcnow() - self.start_time if hasattr(self, 'start_time') else timedelta(0)
+            
+            health_response = {
+                'serviceId': 'htpi-tenant-service',
+                'status': 'healthy',
+                'message': 'Tenant service operational',
+                'version': '1.0.0',
+                'uptime': str(uptime),
+                'requestId': request_id,
+                'clientId': client_id,
+                'timestamp': datetime.utcnow().isoformat(),
+                'stats': {
+                    'total_tenants': len(MOCK_TENANTS),
+                    'active_tenants': len([t for t in MOCK_TENANTS.values() if t['status'] == 'active'])
+                }
+            }
+            
+            # Send response back to admin portal
+            await self.nc.publish(f"admin.health.response.{client_id}", 
+                                json.dumps(health_response).encode())
+            
+            logger.info(f"Health check response sent for request {request_id}")
+            
+        except Exception as e:
+            logger.error(f"Error handling health check: {str(e)}")
+    
     async def run(self):
         """Run the service"""
+        self.start_time = datetime.utcnow()
+        
         await self.connect()
         logger.info("Tenant service is running...")
         
