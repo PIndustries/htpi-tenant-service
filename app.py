@@ -80,12 +80,17 @@ class TenantService:
         """Connect to NATS"""
         try:
             # Build connection options
-            options = {}
+            options = {
+                'servers': [NATS_URL],
+                'name': 'htpi-tenant-service',  # Client name for monitoring
+                'reconnect_time_wait': 2,
+                'max_reconnect_attempts': -1
+            }
             if NATS_USER and NATS_PASS:
                 options['user'] = NATS_USER
                 options['password'] = NATS_PASS
             
-            self.nc = await nats.connect(NATS_URL, **options)
+            self.nc = await nats.connect(**options)
             logger.info(f"Connected to NATS at {NATS_URL}")
             
             # Subscribe to tenant requests
@@ -97,7 +102,8 @@ class TenantService:
             await self.nc.subscribe("htpi.tenant.verify.access", cb=self.handle_verify_access)
             
             # Subscribe to health check requests
-            await self.nc.subscribe("htpi.health.htpi.tenant.service", cb=self.handle_health_check)
+            await self.nc.subscribe("health.check", cb=self.handle_health_check)
+            await self.nc.subscribe("htpi-tenant-service.health", cb=self.handle_health_check)
             
             logger.info("Tenant service subscriptions established")
         except Exception as e:
@@ -293,21 +299,23 @@ class TenantService:
     async def handle_health_check(self, msg):
         """Handle health check requests"""
         try:
-            data = json.loads(msg.data.decode())
-            request_id = data.get('requestId')
-            client_id = data.get('clientId')
+            # Parse request data
+            request_data = {}
+            try:
+                request_data = json.loads(msg.data.decode())
+            except:
+                pass
             
             # Calculate uptime
             uptime = datetime.utcnow() - self.start_time if hasattr(self, 'start_time') else timedelta(0)
             
             health_response = {
-                'serviceId': 'htpi-tenant-service',
-                'status': 'healthy',
-                'message': 'Tenant service operational',
+                'service': 'htpi-tenant-service',
                 'version': '1.0.0',
+                'healthy': True,
+                'message': 'Service operational - htpi-tenant-service',
+                'nats_connected': self.nc.is_connected if self.nc else False,
                 'uptime': str(uptime),
-                'requestId': request_id,
-                'clientId': client_id,
                 'timestamp': datetime.utcnow().isoformat(),
                 'stats': {
                     'total_tenants': len(MOCK_TENANTS),
@@ -315,11 +323,19 @@ class TenantService:
                 }
             }
             
-            # Send response back to admin portal
-            await self.nc.publish(f"admin.health.response.{client_id}", 
-                                json.dumps(health_response).encode())
+            # If this is from admin portal with requestId
+            if request_data.get('requestId'):
+                health_response['requestId'] = request_data['requestId']
+                # Send to admin health response channel
+                await self.nc.publish(
+                    f"health.response.htpi-tenant-service",
+                    json.dumps(health_response).encode()
+                )
             
-            logger.info(f"Health check response sent for request {request_id}")
+            # Standard response
+            await msg.respond(json.dumps(health_response).encode())
+            
+            logger.info(f"Health check response sent")
             
         except Exception as e:
             logger.error(f"Error handling health check: {str(e)}")
