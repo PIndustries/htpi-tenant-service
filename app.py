@@ -105,6 +105,9 @@ class TenantService:
             await self.nc.subscribe("health.check", cb=self.handle_health_check)
             await self.nc.subscribe("htpi-tenant-service.health", cb=self.handle_health_check)
             
+            # Subscribe to ping requests
+            await self.nc.subscribe("htpi.tenant.service.ping", cb=self.handle_ping)
+            
             logger.info("Tenant service subscriptions established")
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {str(e)}")
@@ -295,6 +298,32 @@ class TenantService:
                 'hasAccess': False,
                 'error': str(e)
             }).encode())
+    
+    async def handle_ping(self, msg):
+        """Handle ping requests"""
+        try:
+            data = json.loads(msg.data.decode())
+            ping_id = data.get('pingId')
+            client_id = data.get('clientId')
+            
+            # Send pong response
+            pong_data = {
+                'serviceId': 'htpi-tenant-service',
+                'pingId': ping_id,
+                'clientId': client_id,
+                'timestamp': datetime.utcnow().isoformat(),
+                'message': 'Tenant Service Online'
+            }
+            
+            await self.nc.publish(
+                'services.pong.htpi-tenant-service',
+                json.dumps(pong_data).encode()
+            )
+            
+            logger.info(f"Sent pong response for ping {ping_id}")
+            
+        except Exception as e:
+            logger.error(f"Error handling ping: {str(e)}")
     
     async def handle_health_check(self, msg):
         """Handle health check requests"""
