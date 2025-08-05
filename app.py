@@ -108,6 +108,12 @@ class TenantService:
             # Subscribe to ping requests
             await self.nc.subscribe("htpi.tenant.service.ping", cb=self.handle_ping)
             
+            # Register with monitor service
+            await self._register_with_monitor()
+            
+            # Start heartbeat
+            asyncio.create_task(self._send_heartbeat())
+            
             logger.info("Tenant service subscriptions established")
         except Exception as e:
             logger.error(f"Failed to connect to NATS: {str(e)}")
@@ -368,6 +374,55 @@ class TenantService:
             
         except Exception as e:
             logger.error(f"Error handling health check: {str(e)}")
+    
+    async def _register_with_monitor(self):
+        """Register with monitor service"""
+        try:
+            registration_data = {
+                "service": "htpi-tenant-service",
+                "version": "1.0.0",
+                "metadata": {
+                    "type": "microservice",
+                    "framework": "asyncio",
+                    "purpose": "tenant-management"
+                }
+            }
+            await self.nc.publish("monitor.register", json.dumps(registration_data).encode())
+            logger.info("Registered htpi-tenant-service with monitor service")
+        except Exception as e:
+            logger.error(f"Failed to register with monitor: {str(e)}")
+    
+    async def _send_heartbeat(self):
+        """Send periodic heartbeat to monitor service"""
+        heartbeat_interval = 10  # seconds
+        
+        while True:
+            try:
+                if self.nc and self.nc.is_connected:
+                    heartbeat_data = {
+                        "service": "htpi-tenant-service",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "version": "1.0.0",
+                        "metadata": {
+                            "healthy": True,
+                            "connected_to_nats": True,
+                            "total_tenants": len(MOCK_TENANTS),
+                            "active_tenants": len([t for t in MOCK_TENANTS.values() if t['status'] == 'active'])
+                        }
+                    }
+                    await self.nc.publish(
+                        "monitor.heartbeat.htpi-tenant-service", 
+                        json.dumps(heartbeat_data).encode()
+                    )
+                    logger.debug("Sent heartbeat for htpi-tenant-service")
+                else:
+                    logger.warning("NATS not connected, skipping heartbeat")
+                    
+                await asyncio.sleep(heartbeat_interval)
+                
+            except Exception as e:
+                logger.error(f"Error sending heartbeat: {str(e)}")
+                await asyncio.sleep(heartbeat_interval)
     
     async def run(self):
         """Run the service"""
